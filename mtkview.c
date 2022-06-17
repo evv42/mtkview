@@ -73,7 +73,7 @@ char** get_files(char* orgfile, int* entries){
 	if (d) {
 		while ((dir = readdir(d)) != NULL){
 			char* dext = strrchr(dir->d_name,'.');
-			if(dext != NULL)if(!strcmp(dext,".png") || !strcmp(dext,".jpg") || !strcmp(dext,".jpeg") || !strcmp(dext,".bmp") || !strcmp(dext,".gif") || !strcmp(dext,".qoi") || !strcmp(dext,".PNG") || !strcmp(dext,".JPG") || !strcmp(dext,".JPEG") || !strcmp(dext,".BMP") || !strcmp(dext,".GIF") || !strcmp(dext,".QOI")){
+			if(dext != NULL)if(!strcmp(dext,".png") || !strcmp(dext,".jpg") || !strcmp(dext,".jpeg") || !strcmp(dext,".jpe") || !strcmp(dext,".bmp") || !strcmp(dext,".gif") || !strcmp(dext,".qoi") || !strcmp(dext,".mima") || !strcmp(dext,".PNG") || !strcmp(dext,".JPG") || !strcmp(dext,".JPEG") || !strcmp(dext,".BMP") || !strcmp(dext,".GIF")){
 				filelist[*entries] = malloc(MAX_FILE_LEN);
 				strcpy(filelist[*entries],dir->d_name);
 				*entries += 1;
