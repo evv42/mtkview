@@ -4,9 +4,9 @@ Supports png,jpg,qoi,bmp and unanimated gif.
 
 ## Compiling
 
-With dmtk installed :
+With Xlib installed :
 ```
-$ make
+$ ./build.sh
 ```
 
 ## Usage

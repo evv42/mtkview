@@ -1,7 +1,7 @@
 /* See LICENSE file for copyright and license details. */
 #include <stdio.h>
 #include <unistd.h>
-#include "dmtkgui.h"
+#define DMTK_IMPLEMENTATION
 #include "dmtk.h"
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
@@ -23,14 +23,14 @@ void draw_interface(DWindow* win, Image im){
 	int rx = win->rx;
 	int ry = win->ry;
 	
-	mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
+	mtk_put_rectangle(win,0,0,rx,ry,BLK);
 	
     if(im.width <= rx && im.height <= ry){
 		int h = (rx-im.width)/2;
 		int v = (ry-im.height)/2;
 		mtk_put_image_buffer(win, h, v, im);
 	}else{
-		mtk_put_astring(win,10,10,"Rendering...",WHT);
+		mtk_put_string(win,10,10,"Rendering...",BLK,WHT);
 		DFlush(win);
 		const double hratio = (double)rx/(double)im.width;
 		const double vratio = (double)ry/(double)im.height;
@@ -53,9 +53,8 @@ void draw_interface(DWindow* win, Image im){
 //Gives a worst-case number of files in dir
 int count_dir_entries(char* directory){
 	int i = 0;
-	DIR* d;
 	struct dirent* dir;
-	d = opendir(directory);
+	DIR* d = opendir(directory);
 	if (d) {
 		while ((dir = readdir(d)) != NULL)i++;
 		closedir(d);
@@ -66,9 +65,8 @@ int count_dir_entries(char* directory){
 //Generates a NULL-terminated list of images in the folder, and properly recount files.
 char** get_files(char* orgfile, int* entries){
 	char** filelist = malloc(sizeof(char*)*(*entries + 1));
-	DIR* d;
 	struct dirent* dir;
-	d = opendir(orgfile);
+	DIR* d = opendir(orgfile);
 	*entries = 0;
 	if (d) {
 		while ((dir = readdir(d)) != NULL){
@@ -110,8 +108,7 @@ char* generate_filepath(char* old, char* dir, char* file){
 
 Image reload_image(Image im, DWindow* win, char* viewed){
 	mtk_free_image(im);
-	mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
-	mtk_put_astring(win,10,10,"Loading image...",WHT);
+	mtk_put_string(win,10,10,"Loading image...",BLK,WHT);
 	DFlush(win);
 	return mtk_load_image(viewed);
 }
