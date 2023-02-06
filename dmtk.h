@@ -2,7 +2,7 @@
 /* da minimalist toolkit
  * single* header version
  * *including unifont would be a PITA
- * Copyright 2020,2021,2022 evv42.
+ * Copyright 2020,2021,2022,2023 evv42.
 */
 # ifndef __DMTK_H__
 # define __DMTK_H__
@@ -104,6 +104,9 @@ extern "C" {
 
 
 #include <stdint.h>
+#if !(__STDC_NO_ATOMICS__)
+#include <stdatomic.h>
+#endif
 
 //This will affect memory usage.
 //A bigger buffer means faster draws of images.
@@ -141,9 +144,15 @@ typedef struct GUIRequest GUIRequest;
 struct DWindow{
 	int rx;
 	int ry;
+#if !(__STDC_NO_ATOMICS__)
+	atomic_char drawrq;
+	DrawRequest drq;
+	atomic_char guirq;
+#else
 	char drawrq;
 	DrawRequest drq;
 	char guirq;
+#endif
 	GUIRequest grq;
 	char alive;
 };
@@ -303,6 +312,7 @@ int mtk_get_button(DWindow* win, ButtonArray* buttons, int x, int y);
 #include <X11/Xos.h>
 #include <X11/Xatom.h>
 #include <X11/Xlocale.h>
+#include <X11/extensions/Xrender.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -365,18 +375,17 @@ DWindow* DInitBorderless(int x, int y, char* name){
 static XlibWin init_x(int rx, int ry, int type, char* name){    
 	setlocale(LC_ALL, "");
 	XlibWin xlw = {0};
-	unsigned long black,white;
 
 	/* use the information from the environment variable DISPLAY
 	   to create the X connection:
 	*/
     char *dn = getenv("DISPLAY");
 	xlw.dis=XOpenDisplay(dn);
-   	xlw.screen=DefaultScreen(xlw.dis);
-	black=BlackPixel(xlw.dis, xlw.screen),	/* get color black */
-	white=WhitePixel(xlw.dis, xlw.screen);  /* get color white */
+	xlw.screen=DefaultScreen(xlw.dis);
+	const unsigned long black=BlackPixel(xlw.dis, xlw.screen);  /* get color black */
+	const unsigned long white=WhitePixel(xlw.dis, xlw.screen);  /* get color white */
 
-   	xlw.xw=XCreateSimpleWindow(xlw.dis,DefaultRootWindow(xlw.dis),0,0,rx, ry, 5, black, white);
+	xlw.xw=XCreateSimpleWindow(xlw.dis,DefaultRootWindow(xlw.dis),0,0,rx, ry, 5, black, white);
 
 	//select allowed inputs
 	XSelectInput(xlw.dis, xlw.xw, ExposureMask|ButtonPressMask|KeyPressMask);
@@ -421,16 +430,6 @@ static void close_x(XlibWin xlw) {
 	exit(0);
 }
 
-static void cut_image(char* image, int xo, int yo, int xf, int yf){
-	int rest = (xo*yo*4) - (xf*4);
-	while(yf>0){
-		memmove(image+(xf*4),image+(xo*4),rest);
-		rest -= (xf*4);
-		yf -= 1;
-		image += (xf*4);
-	}
-}
-
 static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 	//Check if the user has been silly, and have not waited for the redraw to RESIZE_RQ
 	//If the request is a name change, we can however let it pass
@@ -445,52 +444,47 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 	DrawRequest drq = win->drq;
 	char* drawbuf;
 	XImage* image;
+	Pixmap pixs;
+	Picture pict, pictw;
+	XWindowAttributes attr;
+	GC gc;
 	
 	switch(drq.type){
 		case PIXEL_RQ:
-			//Check if the dev has been silly, and have tried drawing out of bounds
-			if(drq.h+drq.sx > win->rx || drq.v+drq.sy > win->ry){
-				if(drq.h > win->rx || drq.v > win->ry){
-					win->drawrq = 0;
-					return;
-				}
-				int xf = drq.sx < win->rx-drq.h ? drq.sx : win->rx-drq.h;
-				int yf = drq.sy < win->ry-drq.v ? drq.sy : win->ry-drq.v;
-				cut_image(drq.data, drq.sx, drq.sy, xf, yf);
-				drq.sx = xf;
-				drq.sy = yf;
-			}
 			drawbuf = malloc(drq.sx*drq.sy*4);
-			memcpy(drawbuf,drq.data,drq.sx*drq.sy*4);
+			XVisualInfo v;
+			XMatchVisualInfo(xlw.dis, xlw.screen, 32, TrueColor, &v);
+			image = XCreateImage(xlw.dis, v.visual, 32, ZPixmap, 0, drawbuf, drq.sx, drq.sy, 32, 0);
+			memcpy(image->data,drq.data,drq.sx*drq.sy*4);
 			win->drawrq = 0;
-			image = XCreateImage(xlw.dis, DefaultVisual(xlw.dis, DefaultScreen(xlw.dis)), 24, ZPixmap, 0, drawbuf, drq.sx, drq.sy, 32, 0);
-			//printf("%d,%d,%d,%d,%d,%d\n", win->rx, win->ry, drq.h, drq.v, drq.sx, drq.sy);
-			//fflush(stdout);
-			//Get window image, so we can properly do alpha channel.
-			if(drq.h<0 || drq.v<0 || drq.sx<0 || drq.sy<0){
-				printf("DMTKGUI:%d,%d,%d,%d,%d,%d\n", win->rx, win->ry, drq.h, drq.v, drq.sx, drq.sy);
-				fflush(stdout);
-				XDestroyImage(image);
-				return;
-			}
-			XImage* scr = XGetImage(xlw.dis,xlw.xw, drq.h, drq.v, drq.sx, drq.sy, 0xFFFFFFFF, ZPixmap);
 			
-			//This part does RGB to BGR conversion, and alpha channel calc.
-			char* srcNdest=image->data; char* old=scr->data; char srcRED; char srcIALPHA;
+			//RGBA to BGRA (little-endian ARGB) + premultiply alpha
+			char* srcNdest=image->data; char srcR; char srcG; char srcB;
 			for(int i=0; i<drq.sx*drq.sy; i++){
-				srcRED = srcNdest[0];//Remove if you hate red
-				srcIALPHA = 0xFF-srcNdest[3];
-				srcNdest[0] = ((srcNdest[2] * srcNdest[3] ) + (old[0] * srcIALPHA ))/0xFF;
-				srcNdest[1] = ((srcNdest[1] * srcNdest[3] ) + (old[1] * srcIALPHA ))/0xFF;
-				srcNdest[2] = ((srcRED      * srcNdest[3] ) + (old[2] * srcIALPHA ))/0xFF;
-				srcNdest[3] = 0xFF;
+				srcR = srcNdest[0];
+				srcG = srcNdest[1];
+				srcB = srcNdest[2];
+				const char srcA = srcNdest[3];
+				srcNdest[0] = (srcB * srcA) / 0xFF;
+				srcNdest[1] = (srcG * srcA) / 0xFF;
+				srcNdest[2] = (srcR * srcA) / 0xFF;
 				srcNdest+=4;
-				old+=4;
 			}
 			
-			XPutImage(xlw.dis, xlw.xw, xlw.gc, image, 0, 0, drq.h, drq.v, drq.sx, drq.sy);
-			XDestroyImage(image);
-			XDestroyImage(scr);
+			//Create source picture
+			pixs = XCreatePixmap(xlw.dis, xlw.xw, drq.sx, drq.sy, 32);
+			gc = XCreateGC(xlw.dis, pixs, 0, 0);
+			XPutImage(xlw.dis, pixs, gc, image, 0, 0, 0, 0, drq.sx, drq.sy);
+			XGetWindowAttributes(xlw.dis, xlw.xw, &attr);
+			pict = XRenderCreatePicture(xlw.dis, pixs, XRenderFindStandardFormat(xlw.dis,PictStandardARGB32),0,0);
+			
+			//Get window picture and overlay source
+			pictw = XRenderCreatePicture(xlw.dis, xlw.xw, XRenderFindVisualFormat(xlw.dis,attr.visual),0, 0);
+			XRenderComposite(xlw.dis, PictOpOver, pict, 0, pictw, 0, 0, 0, 0, drq.h, drq.v, drq.sx, drq.sy);
+			
+			XRenderFreePicture(xlw.dis, pict);
+			XRenderFreePicture(xlw.dis, pictw);
+			XFreeGC(xlw.dis,gc);
 			return;
 		case RECTANGLE_RQ:
 			win->drawrq = 0;
@@ -509,6 +503,7 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 		case MOVE_RQ:
 			win->drawrq = 0;
 			image = XGetImage(xlw.dis,xlw.xw, drq.h, drq.v, drq.sx, drq.sy, 0xFFFFFFFF, ZPixmap);
+			if(image == NULL)return;
 			XPutImage(xlw.dis, xlw.xw, xlw.gc, image, 0, 0, drq.dx, drq.dy, drq.sx, drq.sy);
 			XDestroyImage(image);
 			return;
@@ -520,8 +515,8 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 static void DEmitResizeRequest(DWindow* win, int x, int y){
 	if(x>=0)win->rx = x;
 	if(y>=0)win->ry = y;
-	win->guirq = 1;
 	win->grq.type = RESIZE_RQ;
+	win->guirq = 1;
 }
 
 static void DGUIProcess(DWindow* win, char type, char* name){
@@ -631,20 +626,20 @@ void DDrawRectangle(DWindow* win, int h, int v, int sx, int sy, unsigned char r,
 	win->drq.g = g;
 	win->drq.b = b;
 	win->drawrq = 1;
-	while(win->drawrq);
+	while(win->drawrq != 0);
 }
 
 void DChangeName(DWindow* win, char* str){
 	win->drq.type = WNAME_RQ;
 	strcpy(win->drq.data,str);
 	win->drawrq = 1;
-	while(win->drawrq);
+	while(win->drawrq != 0);
 }
 
 void DFlush(DWindow* win){
 	win->drq.type = FLUSH_RQ;
 	win->drawrq = 1;
-	while(win->drawrq);
+	while(win->drawrq != 0);
 }
 
 void DMove(DWindow* win, int h, int v, int sx, int sy, int dx, int dy){
@@ -656,7 +651,7 @@ void DMove(DWindow* win, int h, int v, int sx, int sy, int dx, int dy){
 	win->drq.dx = dx;
 	win->drq.dy = dy;
 	win->drawrq = 1;
-	while(win->drawrq);
+	while(win->drawrq != 0);
 }
 
 GUIRequest DGetRequest(DWindow* win){
@@ -767,7 +762,7 @@ int comp_index(const unsigned short* a, const unsigned short* b){
 }
 
 int lookup_index(unsigned short c){
-	unsigned short* p = bsearch(&c, dfont.index, dfont.chars, sizeof(unsigned short), (__compar_fn_t)comp_index);
+	unsigned short* p = bsearch(&c, dfont.index, dfont.chars, sizeof(unsigned short), (int (*)(const void *, const void *))comp_index);
     if(p == NULL)return lookup_index(' ');
 	return p-dfont.index;
 }

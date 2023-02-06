@@ -1,6 +1,6 @@
 #!/bin/sh
-CC=cc
+CC=gcc
 PRG=mtkview
 set -e
 set -x
-$CC -funsigned-char -o $PRG -Wall $PRG.c -lm -lX11
+$CC -Wall -funsigned-char -o  $PRG -Wall -O3 $PRG.c -lm -lX11 -lXrender

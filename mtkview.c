@@ -12,11 +12,14 @@
 #define APPNAME "mtkview"
 #define MAX_FILE_LEN 256
 
+double zrx = -1;
+double zry = -1;
+
 void draw_interface(DWindow* win, Image im){
 	if(im.width < 0){
 		mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
 		Anchor a = mtk_put_astring(win,10,10,"Can't open image.",WHT);
-		mtk_put_astring(win,a.vxanchor,a.vyanchor,im.data,WHT);
+		mtk_put_astring(win,a.vxanchor,a.vyanchor,(char*)im.data,WHT);
 		DFlush(win);
 		return;
 	}
@@ -30,21 +33,41 @@ void draw_interface(DWindow* win, Image im){
 		int v = (ry-im.height)/2;
 		mtk_put_image_buffer(win, h, v, im);
 	}else{
-		mtk_put_string(win,10,10,"Rendering...",BLK,WHT);
-		DFlush(win);
-		const double hratio = (double)rx/(double)im.width;
-		const double vratio = (double)ry/(double)im.height;
-		const double fratio = hratio < vratio ? hratio : vratio;
-		int fx = (fratio * (double)im.width);
-		int fy = (fratio * (double)im.height);
-		int h = (rx-fx)/2;
-		int v = (ry-fy)/2;
-		char* newdata = malloc(fx*fy*4);
-		stbir_resize_uint8((unsigned char*)im.data, im.width, im.height, 0, (unsigned char*)newdata, fx, fy, 0, 4);
-		Image new = (Image){.data=newdata, .width=fx, .height=fy};
-		mtk_put_rectangle(win,0,0,rx,ry,BLK);
-		mtk_put_image_buffer(win, h, v, new);
-		free(newdata);
+		if(zrx == -1){
+			mtk_put_string(win,10,10,"Rendering...",BLK,WHT);
+			DFlush(win);
+			const double hratio = (double)rx/(double)im.width;
+			const double vratio = (double)ry/(double)im.height;
+			const double fratio = hratio < vratio ? hratio : vratio;
+			int fx = (fratio * (double)im.width);
+			int fy = (fratio * (double)im.height);
+			int h = (rx-fx)/2;
+			int v = (ry-fy)/2;
+			unsigned char* newdata = malloc(fx*fy*4);
+			stbir_resize_uint8(im.data, im.width, im.height, 0, newdata, fx, fy, 0, 4);
+			Image new = (Image){.data=newdata, .width=fx, .height=fy};
+			mtk_put_rectangle(win,0,0,rx,ry,BLK);
+			mtk_put_image_buffer(win, h, v, new);
+			free(newdata);
+		}else{
+			const int hr = (double)im.width * zrx;
+			const int vr = (double)im.height * zry;
+			Image new = (Image){.data=NULL, .width=im.width-hr, .height=im.height-vr};
+			unsigned char* newdata = malloc(new.width*new.height*4);
+			new.data = newdata;
+			for(int v=vr;v<im.height;v++)\
+			for(int h=hr;h<im.width;h++){
+				int dest = ( ((v-vr)*new.width)+(h-hr) )*4;
+				int src = ( (v*im.width)+h )*4;
+				newdata[dest] = im.data[src];dest++;src++;
+				newdata[dest] = im.data[src];dest++;src++;
+				newdata[dest] = im.data[src];dest++;src++;
+				newdata[dest] = im.data[src];
+			}
+			mtk_put_rectangle(win,0,0,rx,ry,BLK);
+			mtk_put_image_buffer(win, 0, 0, new);
+			free(newdata);
+		}
 		
 	}
 	DFlush(win);
@@ -71,7 +94,7 @@ char** get_files(char* orgfile, int* entries){
 	if (d) {
 		while ((dir = readdir(d)) != NULL){
 			char* dext = strrchr(dir->d_name,'.');
-			if(dext != NULL)if(!strcmp(dext,".png") || !strcmp(dext,".jpg") || !strcmp(dext,".jpeg") || !strcmp(dext,".jpe") || !strcmp(dext,".bmp") || !strcmp(dext,".gif") || !strcmp(dext,".qoi") || !strcmp(dext,".mima") || !strcmp(dext,".PNG") || !strcmp(dext,".JPG") || !strcmp(dext,".JPEG") || !strcmp(dext,".BMP") || !strcmp(dext,".GIF")){
+			if(dext != NULL)if(!strcmp(dext,".png") || !strcmp(dext,".jpg") || !strcmp(dext,".jpeg") || !strcmp(dext,".jpe") || !strcmp(dext,".bmp") || !strcmp(dext,".gif") || !strcmp(dext,".qoi") || !strcmp(dext,".PNG") || !strcmp(dext,".JPG") || !strcmp(dext,".JPEG") || !strcmp(dext,".BMP") || !strcmp(dext,".GIF")){
 				filelist[*entries] = malloc(MAX_FILE_LEN);
 				strcpy(filelist[*entries],dir->d_name);
 				*entries += 1;
@@ -129,7 +152,7 @@ int main(int argc, char** argv){
 	//Get list of images
 	int direntries = count_dir_entries(dir);
 	char** filelist = get_files(dir, &direntries);
-	qsort(filelist, direntries, sizeof(char*), (__compar_fn_t)qsortstrcmp);
+	qsort(filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
 	
 	int index=-1;
 	//Retroactively get the index of the current file
@@ -179,17 +202,14 @@ int main(int argc, char** argv){
 				}else if(grq.data == SK_Escape){
 					DEndProcess(win);
 					break;
+				}else if(grq.utfkey[0] == ' '){
+					zrx = 0;zry = 0;
+					draw_interface(win, im);
+					break;
 				}else{
 					break;
 				}
-				viewed = generate_filepath(viewed, dir, filelist[index]);
-				status = get_program_status(dir, filelist[index], index+1, direntries);
-				DChangeName(win, status);
-				free(status);
-				im = reload_image(im, win, viewed);
-				confirm_delete = 0;
-				draw_interface(win, im);
-				break;
+				goto reload_title;
 			case MOUSE_RQ:
 				if(grq.data == 3){
 					index++;
@@ -198,8 +218,14 @@ int main(int argc, char** argv){
 					index--;
 					if(index < 0)index=direntries-1;
 				}else{
+					if(zrx < 0)break;
+					zrx = grq.x / (double)win->rx;
+					zry = grq.y / (double)win->ry;
+					draw_interface(win, im);
 					break;
 				}
+			reload_title:
+				zrx = -1;zry = -1;
 				viewed = generate_filepath(viewed, dir, filelist[index]);
 				status = get_program_status(dir, filelist[index], index+1, direntries);
 				DChangeName(win, status);
