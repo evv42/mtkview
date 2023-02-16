@@ -326,6 +326,7 @@ struct XlibWin{
 	Window xw;
 	GC gc;
 	Atom wm_delete_window;
+	char* drawbuf;
 };
 typedef struct XlibWin XlibWin;
 
@@ -372,9 +373,14 @@ DWindow* DInitBorderless(int x, int y, char* name){
 	return DInitGen(x, y, TYPE_DESKAPP, name);
 }
 
-static XlibWin init_x(int rx, int ry, int type, char* name){    
+static XlibWin init_x(int rx, int ry, int type, char* name){   
 	setlocale(LC_ALL, "");
 	XlibWin xlw = {0};
+	xlw.drawbuf = malloc(MTK_IMAGE_CHUNK_SIZE);
+	if(xlw.drawbuf == NULL){
+        perror("malloc");
+        exit(1);
+    }
 
 	/* use the information from the environment variable DISPLAY
 	   to create the X connection:
@@ -424,6 +430,7 @@ static XlibWin init_x(int rx, int ry, int type, char* name){
 }
 
 static void close_x(XlibWin xlw) {
+	free(xlw.drawbuf);
 	XFreeGC(xlw.dis, xlw.gc);
 	XDestroyWindow(xlw.dis,xlw.xw);
 	XCloseDisplay(xlw.dis);
@@ -442,19 +449,18 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 	//WANING: This does not make a copy of the data buffer.
 	//Set win->drawrq to 0 only when the data buffer has been used.
 	DrawRequest drq = win->drq;
-	char* drawbuf;
 	XImage* image;
-	Pixmap pixs;
-	Picture pict, pictw;
-	XWindowAttributes attr;
-	GC gc;
 	
 	switch(drq.type){
 		case PIXEL_RQ:
-			drawbuf = malloc(drq.sx*drq.sy*4);
+		{
+			Pixmap pixs;
+			Picture pict, pictw;
+			XWindowAttributes attr;
+			GC gc;
 			XVisualInfo v;
 			XMatchVisualInfo(xlw.dis, xlw.screen, 32, TrueColor, &v);
-			image = XCreateImage(xlw.dis, v.visual, 32, ZPixmap, 0, drawbuf, drq.sx, drq.sy, 32, 0);
+			image = XCreateImage(xlw.dis, v.visual, 32, ZPixmap, 0, xlw.drawbuf, drq.sx, drq.sy, 32, 0);
 			memcpy(image->data,drq.data,drq.sx*drq.sy*4);
 			win->drawrq = 0;
 			
@@ -481,11 +487,15 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 			//Get window picture and overlay source
 			pictw = XRenderCreatePicture(xlw.dis, xlw.xw, XRenderFindVisualFormat(xlw.dis,attr.visual),0, 0);
 			XRenderComposite(xlw.dis, PictOpOver, pict, 0, pictw, 0, 0, 0, 0, drq.h, drq.v, drq.sx, drq.sy);
-			
+
+			image->data = NULL;//Do not free the buffer
+			XFreePixmap(xlw.dis, pixs);
+			XDestroyImage(image);
 			XRenderFreePicture(xlw.dis, pict);
 			XRenderFreePicture(xlw.dis, pictw);
 			XFreeGC(xlw.dis,gc);
 			return;
+		}
 		case RECTANGLE_RQ:
 			win->drawrq = 0;
 			if(drq.sx < 1 || drq.sy < 1)return;
@@ -560,18 +570,18 @@ static void DGUIProcess(DWindow* win, char type, char* name){
 					break;
 				case ClientMessage:
 					if ((Atom)event.xclient.data.l[0] == xlw.wm_delete_window) {
-						win->alive = 0;
 						win->guirq = 0;
 						win->drawrq = 0;
+						win->alive = 0;
 						close_x(xlw);
 					}
 					break;
 			}
 		}
 		if(win->guirq && win->grq.type == CLOSE_RQ){
-			win->alive = 0;
 			win->guirq = 0;
 			win->drawrq = 0;
+			win->alive = 0;
 			close_x(xlw);
 		}
 		if(win->drawrq){
@@ -592,7 +602,7 @@ void DDrawPixels(DWindow* win, int h, int v, int sx, int sy, unsigned char* data
 		win->drq.sy = sy;
 		memcpy(win->drq.data,data,sx*sy*4);
 		win->drawrq = 1;
-		while(win->drawrq);
+		while(win->alive && win->drawrq);
 	}else{
 		//how many lines can we store in the buffer ?
 		int lines = MTK_IMAGE_CHUNK_SIZE / (sx*4);
@@ -608,7 +618,7 @@ void DDrawPixels(DWindow* win, int h, int v, int sx, int sy, unsigned char* data
 			//printf("%d,%d %dx%d %d\n",win->drq.h,win->drq.v,win->drq.sx,win->drq.sy,vshift);
 			//fflush(stdout);
 			win->drawrq = 1;
-			while(win->drawrq);
+			while(win->alive && win->drawrq);
 			v += win->drq.sy;
 			vshift += win->drq.sy*sx*4;
 			sy -= win->drq.sy;
@@ -626,20 +636,20 @@ void DDrawRectangle(DWindow* win, int h, int v, int sx, int sy, unsigned char r,
 	win->drq.g = g;
 	win->drq.b = b;
 	win->drawrq = 1;
-	while(win->drawrq != 0);
+	while(win->alive && win->drawrq);
 }
 
 void DChangeName(DWindow* win, char* str){
 	win->drq.type = WNAME_RQ;
 	strcpy(win->drq.data,str);
 	win->drawrq = 1;
-	while(win->drawrq != 0);
+	while(win->alive && win->drawrq);
 }
 
 void DFlush(DWindow* win){
 	win->drq.type = FLUSH_RQ;
 	win->drawrq = 1;
-	while(win->drawrq != 0);
+	while(win->alive && win->drawrq);
 }
 
 void DMove(DWindow* win, int h, int v, int sx, int sy, int dx, int dy){
@@ -651,7 +661,7 @@ void DMove(DWindow* win, int h, int v, int sx, int sy, int dx, int dy){
 	win->drq.dx = dx;
 	win->drq.dy = dy;
 	win->drawrq = 1;
-	while(win->drawrq != 0);
+	while(win->alive && win->drawrq);
 }
 
 GUIRequest DGetRequest(DWindow* win){
