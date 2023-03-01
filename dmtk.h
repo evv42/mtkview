@@ -320,15 +320,14 @@ int mtk_get_button(DWindow* win, ButtonArray* buttons, int x, int y);
 #define TYPE_NORMAL 0
 #define TYPE_DESKAPP 1 //Makes the window spawn at the top-left of the screen, without border.
 
-struct XlibWin{
+typedef struct{
 	Display* dis;
 	int screen;
 	Window xw;
 	GC gc;
 	Atom wm_delete_window;
 	char* drawbuf;
-};
-typedef struct XlibWin XlibWin;
+} XlibWin;
 
 static void DGUIProcess(DWindow* win, char type, char* name);
 
@@ -407,16 +406,31 @@ static XlibWin init_x(int rx, int ry, int type, char* name){
 	XClearWindow(xlw.dis, xlw.xw);
 
     if(type == TYPE_DESKAPP){
-        //Set window type
-        Atom window_type = XInternAtom(xlw.dis, "_NET_WM_WINDOW_TYPE", False);
-        long value = XInternAtom(xlw.dis, "_NET_WM_WINDOW_TYPE_SPLASH", False);
-        XChangeProperty(xlw.dis, xlw.xw, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
+		//Using old motif stuff
+		typedef struct {
+			unsigned long flags;
+			unsigned long functions;
+			unsigned long decorations;
+			long input_mode;
+			unsigned long status;
+		} mhints;
+		enum {
+			MWM_HINTS_FUNCTIONS = (1L << 0),
+			MWM_HINTS_DECORATIONS =  (1L << 1),
+			MWM_FUNC_ALL = (1L << 0),
+			MWM_FUNC_RESIZE = (1L << 1),
+			MWM_FUNC_MOVE = (1L << 2),
+			MWM_FUNC_MINIMIZE = (1L << 3),
+			MWM_FUNC_MAXIMIZE = (1L << 4),
+			MWM_FUNC_CLOSE = (1L << 5)
+		};
 
-        //Set window state
-        window_type = XInternAtom(xlw.dis, "_NET_WM_STATE", False);
-        value = XInternAtom(xlw.dis, "_NET_WM_WINDOW_STATE_ABOVE", False);
-        XChangeProperty(xlw.dis, xlw.xw, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
-    }
+		Atom mHintsProperty = XInternAtom(xlw.dis, "_MOTIF_WM_HINTS", 0);
+		mhints hints;
+		hints.flags = MWM_HINTS_DECORATIONS;
+		hints.decorations = 0;
+		XChangeProperty(xlw.dis, xlw.xw, mHintsProperty, mHintsProperty, 32, PropModeReplace, (unsigned char *)&hints, 5);
+	}
 
     //set win name (mantadory)
 	XStoreName(xlw.dis,xlw.xw,name);
@@ -425,7 +439,7 @@ static XlibWin init_x(int rx, int ry, int type, char* name){
 	xlw.wm_delete_window = XInternAtom(xlw.dis, "WM_DELETE_WINDOW", False);
 	XSetWMProtocols(xlw.dis, xlw.xw, &xlw.wm_delete_window, 1);
 	XSync(xlw.dis, False);
-	
+
 	return xlw;
 }
 
@@ -446,7 +460,7 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 		return;
 	}
 	
-	//WANING: This does not make a copy of the data buffer.
+	//WARNING: This does not make a copy of the data buffer.
 	//Set win->drawrq to 0 only when the data buffer has been used.
 	DrawRequest drq = win->drq;
 	XImage* image;
@@ -461,19 +475,21 @@ static void DAcceptDrawRequest(XlibWin xlw, DWindow* win){
 			XVisualInfo v;
 			XMatchVisualInfo(xlw.dis, xlw.screen, 32, TrueColor, &v);
 			image = XCreateImage(xlw.dis, v.visual, 32, ZPixmap, 0, xlw.drawbuf, drq.sx, drq.sy, 32, 0);
+			image->byte_order = MSBFirst;//Image is big-endian
 			memcpy(image->data,drq.data,drq.sx*drq.sy*4);
 			win->drawrq = 0;
 			
-			//RGBA to BGRA (little-endian ARGB) + premultiply alpha
-			char* srcNdest=image->data; char srcR; char srcG; char srcB;
+			//RGBA to ARGB convertion + premultiply alpha
+			char* srcNdest=image->data;
 			for(int i=0; i<drq.sx*drq.sy; i++){
-				srcR = srcNdest[0];
-				srcG = srcNdest[1];
-				srcB = srcNdest[2];
+				const char srcR = srcNdest[0];
+				const char srcG = srcNdest[1];
+				const char srcB = srcNdest[2];
 				const char srcA = srcNdest[3];
-				srcNdest[0] = (srcB * srcA) / 0xFF;
-				srcNdest[1] = (srcG * srcA) / 0xFF;
-				srcNdest[2] = (srcR * srcA) / 0xFF;
+				srcNdest[0] = srcA;
+				srcNdest[1] = (srcR * srcA) / 0xFF;
+				srcNdest[2] = (srcG * srcA) / 0xFF;
+				srcNdest[3] = (srcB * srcA) / 0xFF;
 				srcNdest+=4;
 			}
 			

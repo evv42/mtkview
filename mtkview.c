@@ -188,7 +188,6 @@ int main(int argc, char** argv){
 	int index=-1;
 	//Retroactively get the index of the current file
 	char** iptr = bsearch(&file, filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
-	printf("%d\n",(iptr-filelist));
 	index = iptr-filelist;
 	//for(int i=0; filelist[i] != NULL && index == -1; i++)if(!strcmp(filelist[i],file))index = i;
 
