@@ -24,12 +24,14 @@ typedef struct{
 typedef struct{
 	double zrx;
 	double zry;
+	char infodisplayed;
 	char* title;
+	char* info;
 	char* viewed;
 } mtkview_status;
 
 void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animation* anim){
-	if(im.width < 0){//Print failtures to the screen
+	if(im.width < 0){//Print failures to the screen
 		Anchor a = mtk_put_astring(win,10,10,"Can't open image.",WHT);
 		mtk_put_astring(win,a.vxanchor,a.vyanchor,(char*)im.data,WHT);
 		DFlush(win);
@@ -37,13 +39,18 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 	}
 	int rx = win->rx;
 	int ry = win->ry;
+	Image final_image = im;
+	unsigned char* newdata = NULL;
+	int h = 0;
+	int v = 0;
 	
     if(im.width <= rx && im.height <= ry){//Case A: image is smol
-		int h = (rx-im.width)/2;
-		int v = (ry-im.height)/2;
-		mtk_put_image_buffer(win, h, v, im);
+		snprintf(st->info,256,"%s: %dx%d, actual size",st->viewed, im.width, im.height);
+		h = (rx-im.width)/2;
+		v = (ry-im.height)/2;
 	}else{
 		if(st->zrx == -1){//Case B: image is big
+			snprintf(st->info,256,"%s: %dx%d, resized",st->viewed, im.width, im.height);
 			if(!anim->animated)mtk_put_string(win,10,10,"Rendering...",BLK,WHT);
 			DFlush(win);
 			const double hratio = (double)rx/(double)im.width;
@@ -51,35 +58,31 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 			const double fratio = hratio < vratio ? hratio : vratio;
 			int fx = (fratio * (double)im.width);
 			int fy = (fratio * (double)im.height);
-			int h = (rx-fx)/2;
-			int v = (ry-fy)/2;
-			unsigned char* newdata = malloc(fx*fy*4);
+			h = (rx-fx)/2;
+			v = (ry-fy)/2;
+			newdata = malloc(fx*fy*4);
 			stbir_resize_uint8(im.data, im.width, im.height, 0, newdata, fx, fy, 0, 4);
-			Image new = (Image){.data=newdata, .width=fx, .height=fy};
+			final_image = (Image){.data=newdata, .width=fx, .height=fy};
 			if(!anim->animated)mtk_put_rectangle(win,0,0,rx,ry,BLK);
-			mtk_put_image_buffer(win, h, v, new);
-			free(newdata);
 		}else{//Case C: image is big and we want details
-			const int hr = (double)im.width * st->zrx;
-			const int vr = (double)im.height * st->zry;
-			Image new = (Image){.data=NULL, .width=im.width-hr, .height=im.height-vr};
-			unsigned char* newdata = malloc(new.width*new.height*4);
-			new.data = newdata;
-			for(int v=vr;v<im.height;v++)\
-			for(int h=hr;h<im.width;h++){
-				int dest = ( ((v-vr)*new.width)+(h-hr) )*4;
-				int src = ( (v*im.width)+h )*4;
-				newdata[dest] = im.data[src];dest++;src++;
-				newdata[dest] = im.data[src];dest++;src++;
-				newdata[dest] = im.data[src];dest++;src++;
-				newdata[dest] = im.data[src];
+			snprintf(st->info,256,"%s: %dx%d, actual size (cropped)",st->viewed, im.width, im.height);
+			int hr = (double)(im.width - rx) * st->zrx;if(hr<0)hr=0;
+			int vr = (double)(im.height - ry) * st->zry;if(vr<0)vr=0;
+			final_image = (Image){.data=NULL, .width=im.width-hr, .height=im.height-vr};
+			newdata = malloc(final_image.width*final_image.height*4);
+			final_image.data = newdata;
+			for(int vc=vr;vc<im.height;vc++)\
+			for(int hc=hr;hc<im.width;hc++){
+				int dest = ( ((vc-vr)*final_image.width)+(hc-hr) )*4;
+				int src = ( (vc*im.width)+hc )*4;
+				memcpy(newdata+dest,im.data+src,4);
 			}
-			if(!anim->animated)mtk_put_rectangle(win,0,0,rx,ry,BLK);
-			mtk_put_image_buffer(win, 0, 0, new);
-			free(newdata);
 		}
 		
 	}
+	mtk_put_image_buffer(win, h, v, final_image);
+	if(newdata != NULL)free(newdata);
+	if(st->infodisplayed)mtk_put_string(win,0,win->ry-mtk_font_height(),st->info,0,30,0,WHT);
 	DFlush(win);
 }
 
@@ -109,9 +112,8 @@ char** get_files(char* orgfile, int* entries){
 
 //Generates a string to be displayed on the status bar.
 char* get_program_status(char* dir, char* file, int index, int total){
-	char* stat = malloc(strlen(APPNAME) + strlen(dir) + strlen(file) + 64);
-	*stat=0;
-	sprintf(stat,"%s - %s - %s (%d/%d)", APPNAME, file, strrchr(dir,'/')+1, index, total);
+	char* stat = malloc(256);
+	snprintf(stat,256,"%s - %s - %s (%d/%d)", APPNAME, file, strrchr(dir,'/')+1, index, total);
 	return stat;
 }
 
@@ -121,11 +123,9 @@ int qsortstrcmp(char** a, char** b){
 
 char* generate_filepath(char* old, char* dir, char* file){
 	if(old != NULL)free(old);
-	char* new = malloc(strlen(dir)+strlen(file)+1+1);
-	*new = 0;
-	strcat(new,dir);
-	strcat(new,"/");
-	strcat(new,file);
+	unsigned int size = strlen(dir)+strlen(file)+1+1;
+	char* new = malloc(size);
+	snprintf(new,size,"%s/%s",dir,file);
 	return new;
 }
 
@@ -135,15 +135,13 @@ Image mtkview_load_image(char* path, mtkview_animation* anim){
 	if(dext != NULL)if(!strcmp(dext,".gif") || !strcmp(dext,".GIF")){//Dirty hack
 		FILE* f;
 		stbi__context s;
-		int x;
-		int y;
+		int x,y,comp;
 
 		if (!(f = stbi__fopen(path, "rb")))
 		return (Image){.data=(unsigned char*)"Unable to open file", .width=-1, .height=-1, .handler = ERROR};
 
 		stbi__start_file(&s, f);
-		int comp;
-		unsigned char *result = 0;
+		unsigned char* result = 0;
 
 		if (stbi__gif_test(&s))result = stbi__load_gif_main(&s, &anim->delays, &x, &y, &anim->frames, &comp, 4);
 		else return (Image){.data=(unsigned char*)"Not a GIF", .width=-1, .height=-1, .handler = ERROR};
@@ -202,6 +200,8 @@ int main(int argc, char** argv){
 	st->viewed = generate_filepath(NULL, dir, filelist[index]);
     DWindow* win = DInit(640, 480, APPNAME);
 	st->title = get_program_status(dir, filelist[index], index+1, direntries);
+	st->info = malloc(256);
+	st->infodisplayed = 0;
 	DChangeName(win, st->title);
 	free(st->title);
 	Image im = mtkview_load_image(st->viewed, anim);
@@ -256,6 +256,10 @@ int main(int argc, char** argv){
 					mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
 					draw_interface(win, im, st, anim);
 					break;
+				}else if(grq.utfkey[0] == 'i'){
+					st->infodisplayed = !st->infodisplayed;
+					draw_interface(win, im, st, anim);
+					break;
 				}else{
 					break;
 				}
@@ -301,6 +305,7 @@ int main(int argc, char** argv){
 	if(anim->animated)im.data = anim->first_frame;
 	mtk_free_image(im);
 	free(st->viewed);
+	free(st->info);
 	free(st);
 	free(anim);
 	for(int i=0; filelist[i] != NULL; i++)free(filelist[i]);

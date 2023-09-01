@@ -17,4 +17,5 @@ Page Up/Down for skipping images
 Home/End for viewing the first/last image  
 Delete two times in a row to remove the viewed image  
 '+' for unscaled mode: Click on the window surface to move the view  
+'i' for info mode: Displays the image properties  
 
