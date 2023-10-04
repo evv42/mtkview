@@ -3,7 +3,7 @@
 #include <unistd.h>
 #define STBI_ASSERT(x)//Some GIFs will fail asserts otherwhise
 #define DMTK_IMPLEMENTATION
-#include "dmtk.h"
+#include "dmtk/dmtk.h"
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
 #include <dirent.h> 

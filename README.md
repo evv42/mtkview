@@ -7,6 +7,8 @@ Also supports *some* animated gifs.
 
 With Xlib installed :
 ```
+$ git clone --recurse-submodules https://github.com/evv42/mtkview.git
+$ cd mtkview
 $ ./build.sh
 ```
 

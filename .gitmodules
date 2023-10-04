@@ -1,0 +1,3 @@
+[submodule "dmtk"]
+	path = dmtk
+	url = https://github.com/evv42/dmtk.git
