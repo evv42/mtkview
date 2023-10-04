@@ -30,9 +30,11 @@ typedef struct{
 	char* viewed;
 } mtkview_status;
 
+#define TEXT_DRAWING_POSITION 0,win->ry-(mtk_font_height()*2)
+
 void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animation* anim){
 	if(im.width < 0){//Print failures to the screen
-		Anchor a = mtk_put_astring(win,10,10,"Can't open image.",WHT);
+		Anchor a = mtk_put_astring(win,TEXT_DRAWING_POSITION,"Can't open image.",WHT);
 		mtk_put_astring(win,a.vxanchor,a.vyanchor,(char*)im.data,WHT);
 		DFlush(win);
 		return;
@@ -51,7 +53,7 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 	}else{
 		if(st->zrx == -1){//Case B: image is big
 			snprintf(st->info,256,"%s: %dx%d, resized",st->viewed, im.width, im.height);
-			if(!anim->animated)mtk_put_string(win,10,10,"Rendering...",BLK,WHT);
+			if(!anim->animated)mtk_put_string(win,TEXT_DRAWING_POSITION,"Rendering...",BLK,WHT);
 			DFlush(win);
 			const double hratio = (double)rx/(double)im.width;
 			const double vratio = (double)ry/(double)im.height;
@@ -86,7 +88,11 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 	DFlush(win);
 }
 
-//Generates a NULL-terminated list of images in the folder.
+int qsortstrcmp(char** a, char** b){
+	return strcoll(*a,*b);
+}
+
+//Generates a NULL-terminated sorted list of images in the folder.
 char** get_files(char* orgfile, int* entries){
 	unsigned int list_size = 10;
 	char** filelist = malloc(sizeof(char*)* list_size);
@@ -106,6 +112,7 @@ char** get_files(char* orgfile, int* entries){
 		closedir(d);
 	}else{perror("opendir");}
 	filelist[*entries] = NULL;
+	qsort(filelist, *entries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
 	
 	return filelist;
 }
@@ -115,10 +122,6 @@ char* get_program_status(char* dir, char* file, int index, int total){
 	char* stat = malloc(256);
 	snprintf(stat,256,"%s - %s - %s (%d/%d)", APPNAME, file, strrchr(dir,'/')+1, index, total);
 	return stat;
-}
-
-int qsortstrcmp(char** a, char** b){
-	return strcoll(*a,*b);
 }
 
 char* generate_filepath(char* old, char* dir, char* file){
@@ -159,7 +162,7 @@ Image mtkview_load_image(char* path, mtkview_animation* anim){
 Image reload_image(Image im, DWindow* win, char* viewed, mtkview_animation* anim){
 	if(anim->animated)im.data = anim->first_frame;
 	mtk_free_image(im);
-	mtk_put_string(win,10,10,"Loading image...",BLK,WHT);
+	mtk_put_string(win,TEXT_DRAWING_POSITION,"Loading image...",BLK,WHT);
 	DFlush(win);
 	return mtkview_load_image(viewed, anim);
 }
@@ -181,7 +184,6 @@ int main(int argc, char** argv){
 	//Get list of images
 	int direntries = 0;
 	char** filelist = get_files(dir, &direntries);
-	qsort(filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
 	
 	int index=-1;
 	//Retroactively get the index of the current file
@@ -215,71 +217,61 @@ int main(int argc, char** argv){
 				mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
 				draw_interface(win, im, st, anim);
 				break;
-			case KEYB_RQ:
-				if(grq.data == SK_Right || grq.data == SK_Down){
+			case KEYB_RQ: case MOUSE_RQ:
+				if(grq.data == SK_Right || grq.data == SK_Down || grq.data == 3){//Go to next image
 					index++;
 					if(index > (direntries-1))index = 0;
-				}else if(grq.data == SK_Left || grq.data == SK_Up){
+				}else if(grq.data == SK_Left || grq.data == SK_Up || grq.data == 2){//Go to prev image
 					index--;
 					if(index < 0)index=direntries-1;
-				}else if(grq.data == SK_Page_Up){
-					index-=10;
-					if(index < 0)index=direntries-1;
-				}else if(grq.data == SK_Page_Down){
-					index+=10;
-					if(index > (direntries-1))index = 0;
-				}else if(grq.data == SK_Home || grq.data == SK_KP_Home){
-					index = 0;
-				}else if(grq.data == SK_End || grq.data == SK_KP_End){
-					index=direntries-1;
-				}else if(grq.data == SK_Delete){
-					if(confirm_delete){
-						remove(st->viewed);
-						for(int i=0; filelist[i] != NULL; i++)free(filelist[i]);
-						free(filelist);
-						filelist = get_files(dir, &direntries);
-						qsort(filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
-						if(filelist[index] == NULL)index = 0;
-						confirm_delete = 0;
-					}else{
-						mtk_put_string(win,10,10,"Press again to delete",RED,WHT);
-						DFlush(win);
-						confirm_delete = 1;
-						break;
-					}
-				}else if(grq.data == SK_Escape){
-					DEndProcess(win);
-					break;
-				}else if(grq.utfkey[0] == '+'){
-					if(st->zrx == -1){st->zrx = 0;st->zry = 0;}
-					else{st->zrx = -1;st->zry = -1;}
-					mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
-					draw_interface(win, im, st, anim);
-					break;
-				}else if(grq.utfkey[0] == 'i'){
-					st->infodisplayed = !st->infodisplayed;
-					draw_interface(win, im, st, anim);
-					break;
-				}else{
-					break;
-				}
-				goto reload_title;
-			case MOUSE_RQ:
-				if(grq.data == 3){
-					index++;
-					if(filelist[index] == NULL)index = 0;
-				}else if(grq.data == 2){
-					index--;
-					if(index < 0)index=direntries-1;
-				}else{
+				}else if(grq.data == 1){//Move view area in 1:1 scale mode
 					if(st->zrx < 0)break;
 					st->zrx = grq.x / (double)win->rx;
 					st->zry = grq.y / (double)win->ry;
 					mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
 					draw_interface(win, im, st, anim);
 					break;
+				}else if(grq.data == SK_Page_Up){//Go back 10 images
+					index-=10;
+					if(index < 0)index=direntries-1;
+				}else if(grq.data == SK_Page_Down){//Skip 10 images
+					index+=10;
+					if(index > (direntries-1))index = 0;
+				}else if(grq.data == SK_Home || grq.data == SK_KP_Home){//First image
+					index = 0;
+				}else if(grq.data == SK_End || grq.data == SK_KP_End){//Last image (not that useful)
+					index=direntries-1;
+				}else if(grq.data == SK_Delete){//Delete current image (with confirm)
+					if(confirm_delete){
+						remove(st->viewed);
+						for(int i=0; filelist[i] != NULL; i++)free(filelist[i]);
+						free(filelist);
+						filelist = get_files(dir, &direntries);
+						if(filelist[index] == NULL)index = 0;
+						confirm_delete = 0;
+					}else{
+						mtk_put_string(win,TEXT_DRAWING_POSITION,"Press again to delete",RED,WHT);
+						DFlush(win);
+						confirm_delete = 1;
+						break;
+					}
+				}else if(grq.data == SK_Escape){//Quit
+					DEndProcess(win);
+					break;
+				}else if(grq.utfkey[0] == '+'){//Toggle 1:1 scale mode
+					if(st->zrx == -1){st->zrx = 0;st->zry = 0;}
+					else{st->zrx = -1;st->zry = -1;}
+					mtk_put_rectangle(win,0,0,win->rx,win->ry,BLK);
+					draw_interface(win, im, st, anim);
+					break;
+				}else if(grq.utfkey[0] == 'i'){//Toggle infomode
+					st->infodisplayed = !st->infodisplayed;
+					draw_interface(win, im, st, anim);
+					break;
+				}else{
+					break;
 				}
-			reload_title:
+			//For non-break'd statements, reload
 				st->zrx = -1;st->zry = -1;
 				st->viewed = generate_filepath(st->viewed, dir, filelist[index]);
 				st->title = get_program_status(dir, filelist[index], index+1, direntries);
