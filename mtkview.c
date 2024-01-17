@@ -9,6 +9,7 @@
 #include <dirent.h> 
 #include <limits.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #define APPNAME "mtkview"
 #define MAX_FILE_LEN 256
@@ -167,6 +168,12 @@ Image reload_image(Image im, DWindow* win, char* viewed, mtkview_animation* anim
 	return mtkview_load_image(viewed, anim);
 }
 
+char is_dir(const char *path) {
+   struct stat sb;
+   if(stat(path, &sb))return 0;
+   return S_ISDIR(sb.st_mode);
+}
+
 int main(int argc, char** argv){
 	if(argc < 2)return 1;
 
@@ -177,19 +184,29 @@ int main(int argc, char** argv){
 		perror("realpath");
 		return 1;
 	}
-	char* file = strrchr(dir,'/');
-	*file = 0;
-	file++;
+	char* file = NULL;
+	if(!is_dir(dir)){
+		file = strrchr(dir,'/');
+		*file = 0;
+		file++;
+	}
 	
 	//Get list of images
 	int direntries = 0;
 	char** filelist = get_files(dir, &direntries);
 	
-	int index=-1;
-	//Retroactively get the index of the current file
-	char** iptr = bsearch(&file, filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
-	index = iptr-filelist;
-	//for(int i=0; filelist[i] != NULL && index == -1; i++)if(!strcmp(filelist[i],file))index = i;
+	int index;
+	if(file == NULL){
+		file = filelist[0];
+		index = 0;
+	}else{
+		index=-1;
+		//Retroactively get the index of the current file
+		char** iptr = bsearch(&file, filelist, direntries, sizeof(char*), (int (*)(const void *, const void *))qsortstrcmp);
+		if(iptr == NULL)return 2;
+		index = iptr-filelist;
+		//for(int i=0; filelist[i] != NULL && index == -1; i++)if(!strcmp(filelist[i],file))index = i;
+	}
 
 	mtkview_status* st = malloc(sizeof(mtkview_status));
 	mtkview_animation* anim = malloc(sizeof(mtkview_animation));
