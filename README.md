@@ -5,7 +5,7 @@ Also supports *some* animated gifs.
 
 ## Compiling
 
-With Xlib installed :
+With Xlib installed (edit build.sh if you want to build without libjpeg-turbo) :
 ```
 $ git clone --recurse-submodules https://github.com/evv42/mtkview.git
 $ cd mtkview
