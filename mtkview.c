@@ -6,10 +6,11 @@
 #include "dmtk/dmtk.h"
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
-#include <dirent.h> 
+#include <dirent.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #define APPNAME "mtkview"
 #define MAX_FILE_LEN 256
@@ -46,7 +47,7 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 	unsigned char* newdata = NULL;
 	int h = 0;
 	int v = 0;
-	
+
     if(im.width <= rx && im.height <= ry){//Case A: image is smol
 		snprintf(st->info,256,"%s: %dx%d, actual size",st->viewed, im.width, im.height);
 		h = (rx-im.width)/2;
@@ -65,6 +66,8 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 			v = (ry-fy)/2;
 			newdata = malloc(fx*fy*4);
 			stbir_resize_uint8(im.data, im.width, im.height, 0, newdata, fx, fy, 0, 4);
+			/*version 2, not used yet
+			stbir_resize_uint8_linear(im.data, im.width, im.height, 0, newdata, fx, fy, 0, (stbir_pixel_layout) 4);*/
 			final_image = (Image){.data=newdata, .width=fx, .height=fy};
 			if(!anim->animated)mtk_put_rectangle(win,0,0,rx,ry,BLK);
 		}else{//Case C: image is big and we want details
@@ -81,7 +84,7 @@ void draw_interface(DWindow* win, Image im, mtkview_status* st, mtkview_animatio
 				memcpy(newdata+dest,im.data+src,4);
 			}
 		}
-		
+
 	}
 	mtk_put_image_buffer(win, h, v, final_image);
 	if(newdata != NULL)free(newdata);
@@ -190,11 +193,11 @@ int main(int argc, char** argv){
 		*file = 0;
 		file++;
 	}
-	
+
 	//Get list of images
 	int direntries = 0;
 	char** filelist = get_files(dir, &direntries);
-	
+
 	int index;
 	if(file == NULL){
 		file = filelist[0];
@@ -217,16 +220,18 @@ int main(int argc, char** argv){
 	st->zrx = -1;
 	st->zry = -1;
 	st->viewed = generate_filepath(NULL, dir, filelist[index]);
-    DWindow* win = DInit(640, 480, APPNAME);
+	DWindow* win = DInit(640, 480, APPNAME);
 	st->title = get_program_status(dir, filelist[index], index+1, direntries);
 	st->info = malloc(256);
 	st->infodisplayed = 0;
 	DChangeName(win, st->title);
 	free(st->title);
 	Image im = mtkview_load_image(st->viewed, anim);
-	
+
 	char confirm_delete = 0;
     while(win->alive){
+		struct timeval start, end;
+		gettimeofday(&start, NULL);
 		GUIRequest grq = DGetRequest(win);
 		switch(grq.type){
 			case RESIZE_RQ:
@@ -303,14 +308,19 @@ int main(int argc, char** argv){
 				break;
 		}
 		if(anim->animated){//Accurate enough
-			if(anim->delays[0] != 0)usleep((unsigned long)(anim->delays[anim->disp_frame]) * 1000L);
+			uint64_t then = (start.tv_sec * 1000000) + start.tv_usec;
+			uint64_t delay = (unsigned long)(anim->delays[anim->disp_frame]) * 1000L;
+			gettimeofday(&end, NULL);
+			uint64_t now = (end.tv_sec * 1000000) + end.tv_usec;
+			uint32_t total_usec = now-then;
+			/*if(total_usec < (int)(6541/speed))usleep((int)(6541/speed) - total_usec);*/
+			if(anim->delays[0] != 0 && total_usec < delay)usleep(delay - total_usec);
 			else usleep(41666);//24fps as default
 			if((++anim->disp_frame) > (anim->frames-1))anim->disp_frame = 0;
 			im.data = anim->first_frame + ((im.width*im.height*4) * anim->disp_frame);
 			draw_interface(win, im, st, anim);
 		}else usleep(100000);
     }
-    
 	if(anim->animated)im.data = anim->first_frame;
 	mtk_free_image(im);
 	free(st->viewed);
